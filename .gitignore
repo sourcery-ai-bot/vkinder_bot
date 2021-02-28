@@ -1,0 +1,8 @@
+/.idea/
+/venv/
+/__pycache__/
+/tests.pytest_cache
+/keys.py
+/сlasses/vkinder_bot_threading.py
+/bugs/
+/tests/_pytest.ini
