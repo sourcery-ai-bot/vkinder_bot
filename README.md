@@ -1,12 +1,16 @@
 # VKinder - dating bot
 
-### This bot can find a pair using the Vkontakte API according to the parameters you specified, such as gender, status, age, place of residence. 
+--------------------
 
-** Before using pls rename a file "default_keys.py" to "keys.py" and put inside your personal VK token, your group VK token and DB info. 
-
-** At first launch pls set {"rebuild_tables": true} in file "options.cfg". When this flag set tables in given DB will be dropped and recreated. All data in DB will be lost. After first launch this flag will return to false automatically. 
+### This bot can find a pair using the Vkontakte API according to the parameters you specified, such as gender, status, age, place of residence.
 
 
+### Warning:
+* Before using pls rename a file `default_keys.py` to `keys.py` and put inside your personal VK token, your group VK token and DB info.
+* At first launch pls set `{"rebuild_tables": true}` in file `options.cfg`. When this flag set tables in given DB will be dropped and recreated. All data in DB will be lost. After first launch this flag will return to false automatically. 
+
+
+### Details:
 1. Bot uses 2 tokens (group token for chat conversations with clients, personal token for making search of users)
 2. Bot can receive and remember some client's preferences (country, search history, lists of rated users) which stored in DB
 3. Bot controlled by text commands or screen buttons. Bot shows prompts of acceptable commands 
@@ -16,10 +20,15 @@
 7. Bot can understand commands synonyms, which can be extended
 8. Bot supports timeout of client activity and close session if client is absent
 
-Block diagram of main work flow:
 
+### Additional info:
+Block diagram of main work flow:
+![Block diagram](https://raw.githubusercontent.com/Yuribtr/vkinder_bot/master/demo/block_diagram.png?raw=true)
 
 DB diagram:
-
+![DB diagram](https://raw.githubusercontent.com/Yuribtr/vkinder_bot/master/demo/db_diagram.jpg?raw=true)
 
 Screenshots:
+![Screenshot](https://raw.githubusercontent.com/Yuribtr/vkinder_bot/master/demo/0.jpg?raw=true)
+![Screenshot](https://raw.githubusercontent.com/Yuribtr/vkinder_bot/master/demo/1.jpg?raw=true)
+![Screenshot](https://raw.githubusercontent.com/Yuribtr/vkinder_bot/master/demo/2.jpg?raw=true)
