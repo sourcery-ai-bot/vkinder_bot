@@ -370,7 +370,7 @@ class VkApiClient:
         owner_id = owner_id if owner_id else self.__user_id
         offset = 0
         count = 1000
-        log(f'\nGetting user {owner_id} photos from {album_id}...', self.debug_mode)
+        log(f'Getting user {owner_id} photos from {album_id}...', self.debug_mode)
         while True:
             photos = self.__get_user_photos(count=count, offset=offset, owner_id=owner_id, album_id=album_id, rev=rev,
                                             extended=extended, photo_sizes=photo_sizes)

@@ -1,5 +1,8 @@
+import sys
 from datetime import datetime
 from random import randrange
+from time import sleep
+import requests
 import vk_api
 from vk_api.bot_longpoll import VkBotLongPoll, VkBotEventType
 from vk_api.keyboard import VkKeyboard
@@ -13,7 +16,8 @@ from сlasses.vkinder_db_client import VKinderDb
 
 class VKinderBot:
     def __init__(self, group_token: str, person_token: str, group_id: str, app_id: str, db_name: str, db_login: str,
-                 db_password: str, db_driver: str, db_host: str, db_port: int, debug_mode=False):
+                 db_password: str, db_driver: str, db_host: str, db_port: int, retry_timeout: int = 1,
+                 retry_attempts: int = sys.maxsize, debug_mode=False):
         self.client_activity_timeout = 300
         self.debug_mode = debug_mode
         self.clients_pool = {}
@@ -22,7 +26,8 @@ class VKinderBot:
         # countries received once per application launch (by request), as they almost doesn't changes
         self.countries = []
         self.rebuild_tables = False
-
+        self.retry_timeout = retry_timeout
+        self.retry_attempts = retry_attempts
         self.vk_personal = VkApiClient(person_token, app_id, debug_mode=debug_mode)
         self.db = VKinderDb(db_name, db_login, db_password, db_driver=db_driver, db_host=db_host, db_port=db_port,
                             debug_mode=debug_mode)
@@ -72,147 +77,157 @@ class VKinderBot:
         return client
 
     def start(self):
+        retries = 0
         if not self.__initialized:
             log(f'Can\'t start: {type(self).__name__} not initialized', self.debug_mode)
             return
-        log(f'Listening for messages in group {self.group_id}...', self.debug_mode)
-        for event in self.long_poll.listen():
+        while True and retries < self.retry_attempts:
+            try:
+                retries += 1
+                log(f'Listening for messages in group {self.group_id}...(retry #{retries})', self.debug_mode)
+                for event in self.long_poll.listen():
+                    if event.type == VkBotEventType.MESSAGE_NEW:
+                        client = self.get_client(str(event.object.message['from_id']))
+                        msg = event.object.message['text']
+                        log(f'[{client.fname} {client.lname}] typed "{msg}"', self.debug_mode)
+                        msg = msg.lower()
 
-            if event.type == VkBotEventType.MESSAGE_NEW:
-                client = self.get_client(str(event.object.message['from_id']))
-                msg = event.object.message['text']
-                log(f'[{client.fname} {client.lname}] typed "{msg}"', self.debug_mode)
-                msg = msg.lower()
+                        # obligatory exit from conversation, works at any page, highest priority,
+                        # one exception: if this command not very first one
+                        if msg in self.cmd.get('quit') and client.status != STATUSES['has_contacted']:
+                            self.do_say_goodbye(client)
+                            continue
 
-                # obligatory exit from conversation, works at any page, highest priority,
-                # one exception: if this command not very first one
-                if msg in self.cmd.get('quit') and client.status != STATUSES['has_contacted']:
-                    self.do_say_goodbye(client)
-                    continue
+                        # imitation of custom search - works at any page, highest priority
+                        if msg == 'test':
+                            client.reset_search()
+                            client.search.sex_id = randrange(0, 2, 1)
+                            client.search.status_id = randrange(1, 8, 1)
+                            client.search.city_id = 1
+                            client.search.city_name = 'Москва'
+                            client.search.min_age = randrange(0, 60, 1)
+                            client.search.max_age = randrange(client.search.min_age, 127, 1)
+                            client.rating_filter = RATINGS['new']
+                            self.do_users_search(client)
+                            continue
 
-                # imitation of custom search - works at any page, highest priority
-                if msg == 'test':
-                    client.reset_search()
-                    client.search.sex_id = randrange(0, 2, 1)
-                    client.search.status_id = randrange(1, 8, 1)
-                    client.search.city_id = 1
-                    client.search.city_name = 'Москва'
-                    client.search.min_age = randrange(0, 60, 1)
-                    client.search.max_age = randrange(client.search.min_age, 127, 1)
-                    client.rating_filter = RATINGS['new']
-                    self.do_users_search(client)
-                    continue
+                        # if client prints/press something at "Welcome screen" page
+                        if client.status in (STATUSES['invited'], STATUSES['has_contacted']) \
+                                and (msg in self.cmd.get('yes') or msg in self.cmd.get('new search')):
+                            self.do_start_search_creating(client)
 
-                # if client prints/press something at "Welcome screen" page
-                if client.status in (STATUSES['invited'], STATUSES['has_contacted']) \
-                        and (msg in self.cmd.get('yes') or msg in self.cmd.get('new search')):
-                    self.do_start_search_creating(client)
+                        elif client.status in (STATUSES['invited'], STATUSES['has_contacted']) \
+                                and msg in self.cmd.get('show history'):
+                            self.do_show_search_history(client)
 
-                elif client.status in (STATUSES['invited'], STATUSES['has_contacted']) \
-                        and msg in self.cmd.get('show history'):
-                    self.do_show_search_history(client)
+                        elif client.status in (STATUSES['invited'], STATUSES['has_contacted']) \
+                                and (msg in self.cmd.get('liked') or msg in self.cmd.get('disliked') or msg in
+                                     self.cmd.get('banned')):
+                            self.do_show_rated_users(msg, client)
 
-                elif client.status in (STATUSES['invited'], STATUSES['has_contacted']) \
-                        and (msg in self.cmd.get('liked') or msg in self.cmd.get('disliked') or msg in
-                             self.cmd.get('banned')):
-                    self.do_show_rated_users(msg, client)
+                        elif client.status in (STATUSES['invited'], STATUSES['has_contacted']) and msg in self.cmd.get(
+                                'no'):
+                            self.do_say_goodbye(client)
 
-                elif client.status in (STATUSES['invited'], STATUSES['has_contacted']) and msg in self.cmd.get('no'):
-                    self.do_say_goodbye(client)
+                        elif client.status == STATUSES['has_contacted']:
+                            self.do_propose_start_search(client)
 
-                elif client.status == STATUSES['has_contacted']:
-                    self.do_propose_start_search(client)
+                        # if client prints/press something in "Select search history" page
+                        elif client.status == STATUSES['search_history_input_wait'] and msg in self.cmd.get('back'):
+                            self.do_propose_start_search(client)
 
-                # if client prints/press something in "Select search history" page
-                elif client.status == STATUSES['search_history_input_wait'] and msg in self.cmd.get('back'):
-                    self.do_propose_start_search(client)
+                        # if client prints/press something in "Select search history" page
+                        elif client.status == STATUSES['search_history_input_wait']:
+                            self.on_search_history_choose(msg, client)
 
-                # if client prints/press something in "Select search history" page
-                elif client.status == STATUSES['search_history_input_wait']:
-                    self.on_search_history_choose(msg, client)
+                        # if client prints/press something in "Search country" page
+                        elif client.status == STATUSES['country_input_wait'] and msg in self.cmd.get('back'):
+                            self.do_start_search_creating(client)
 
-                # if client prints/press something in "Search country" page
-                elif client.status == STATUSES['country_input_wait'] and msg in self.cmd.get('back'):
-                    self.do_start_search_creating(client)
+                        # if client prints/press something in "Search country" page
+                        elif client.status == STATUSES['country_input_wait']:
+                            self.on_country_name_input(msg, client)
 
-                # if client prints/press something in "Search country" page
-                elif client.status == STATUSES['country_input_wait']:
-                    self.on_country_name_input(msg, client)
+                        # if client prints/press something in "Select country" page
+                        elif client.status == STATUSES['country_choose_wait'] and msg in self.cmd.get('back'):
+                            self.do_propose_country_name_input(client)
 
-                # if client prints/press something in "Select country" page
-                elif client.status == STATUSES['country_choose_wait'] and msg in self.cmd.get('back'):
-                    self.do_propose_country_name_input(client)
+                        # if client prints/press something in "Select country" page
+                        elif client.status == STATUSES['country_choose_wait']:
+                            self.on_country_name_choose(msg, client)
 
-                # if client prints/press something in "Select country" page
-                elif client.status == STATUSES['country_choose_wait']:
-                    self.on_country_name_choose(msg, client)
+                        # if client prints/press something in "Search city" page
+                        elif client.status == STATUSES['city_input_wait'] and msg in self.cmd.get('back'):
+                            self.do_propose_start_search(client)
 
-                # if client prints/press something in "Search city" page
-                elif client.status == STATUSES['city_input_wait'] and msg in self.cmd.get('back'):
-                    self.do_propose_start_search(client)
+                        # if client prints/press something in "Search city" page
+                        elif client.status == STATUSES['city_input_wait'] and msg in self.cmd.get('country'):
+                            self.do_propose_country_name_input(client)
 
-                # if client prints/press something in "Search city" page
-                elif client.status == STATUSES['city_input_wait'] and msg in self.cmd.get('country'):
-                    self.do_propose_country_name_input(client)
+                        # if client prints/press something in "Search city" page
+                        elif client.status == STATUSES['city_input_wait']:
+                            self.do_propose_city_name_choose(msg, client)
 
-                # if client prints/press something in "Search city" page
-                elif client.status == STATUSES['city_input_wait']:
-                    self.do_propose_city_name_choose(msg, client)
+                        # if client prints/press something in "Select city" page
+                        elif client.status == STATUSES['city_choose_wait'] and msg in self.cmd.get('back'):
+                            self.do_start_search_creating(client)
 
-                # if client prints/press something in "Select city" page
-                elif client.status == STATUSES['city_choose_wait'] and msg in self.cmd.get('back'):
-                    self.do_start_search_creating(client)
+                        # if client prints/press something in "Select city" page
+                        elif client.status == STATUSES['city_choose_wait']:
+                            self.on_city_name_choose(msg, client)
 
-                # if client prints/press something in "Select city" page
-                elif client.status == STATUSES['city_choose_wait']:
-                    self.on_city_name_choose(msg, client)
+                        # if client prints/press something in "Select sex" page
+                        elif client.status == STATUSES['sex_choose_wait'] and msg in self.cmd.get('back'):
+                            self.do_start_search_creating(client)
 
-                # if client prints/press something in "Select sex" page
-                elif client.status == STATUSES['sex_choose_wait'] and msg in self.cmd.get('back'):
-                    self.do_start_search_creating(client)
+                        # if client prints/press something in "Select sex" page
+                        elif client.status == STATUSES['sex_choose_wait']:
+                            self.on_sex_choose(msg, client)
 
-                # if client prints/press something in "Select sex" page
-                elif client.status == STATUSES['sex_choose_wait']:
-                    self.on_sex_choose(msg, client)
+                        # if client prints/press something in "Select love status" page
+                        elif client.status == STATUSES['status_choose_wait'] and msg in self.cmd.get('back'):
+                            self.do_propose_sex_choose(client)
 
-                # if client prints/press something in "Select love status" page
-                elif client.status == STATUSES['status_choose_wait'] and msg in self.cmd.get('back'):
-                    self.do_propose_sex_choose(client)
+                        # if client prints/press something in "Select love status" page
+                        elif client.status == STATUSES['status_choose_wait']:
+                            self.on_status_choose(msg, client)
 
-                # if client prints/press something in "Select love status" page
-                elif client.status == STATUSES['status_choose_wait']:
-                    self.on_status_choose(msg, client)
+                        # if client prints/press something in "Min age" page
+                        elif client.status == STATUSES['min_age_input_wait'] and msg in self.cmd.get('back'):
+                            self.do_propose_status_choose(client)
 
-                # if client prints/press something in "Min age" page
-                elif client.status == STATUSES['min_age_input_wait'] and msg in self.cmd.get('back'):
-                    self.do_propose_status_choose(client)
+                        # if client prints/press something in "Min age" page
+                        elif client.status == STATUSES['min_age_input_wait']:
+                            self.on_min_age_enter(msg, client)
 
-                # if client prints/press something in "Min age" page
-                elif client.status == STATUSES['min_age_input_wait']:
-                    self.on_min_age_enter(msg, client)
+                        # if client prints/press something in "Max age" page
+                        elif client.status == STATUSES['max_age_input_wait'] and msg in self.cmd.get('back'):
+                            self.do_propose_min_age_enter(client)
 
-                # if client prints/press something in "Max age" page
-                elif client.status == STATUSES['max_age_input_wait'] and msg in self.cmd.get('back'):
-                    self.do_propose_min_age_enter(client)
+                        # if client prints/press something in "Max age" page
+                        elif client.status == STATUSES['max_age_input_wait']:
+                            self.on_max_age_enter(msg, client)
 
-                # if client prints/press something in "Max age" page
-                elif client.status == STATUSES['max_age_input_wait']:
-                    self.on_max_age_enter(msg, client)
+                        # if client prints/press something in "User profile view" page
+                        elif client.status == STATUSES['decision_wait'] and msg in self.cmd.get('back'):
+                            if client.rating_filter == RATINGS['new']:
+                                self.do_propose_min_age_enter(client)
+                            else:
+                                self.do_propose_start_search(client)
 
-                # if client prints/press something in "User profile view" page
-                elif client.status == STATUSES['decision_wait'] and msg in self.cmd.get('back'):
-                    if client.rating_filter == RATINGS['new']:
-                        self.do_propose_min_age_enter(client)
-                    else:
-                        self.do_propose_start_search(client)
+                        # if client prints/press something in "User profile view" page
+                        elif client.status == STATUSES['decision_wait']:
+                            self.on_decision_made(msg, client)
 
-                # if client prints/press something in "User profile view" page
-                elif client.status == STATUSES['decision_wait']:
-                    self.on_decision_made(msg, client)
-
-                # if command is unexpected or not recognized
+                        # if command is unexpected or not recognized
+                        else:
+                            self.do_inform_about_unknown_command(client)
+            except requests.exceptions.ConnectionError:
+                if retries < self.retry_attempts:
+                    log(f'Error in connection. Retry in {self.retry_timeout} seconds...', self.debug_mode)
+                    sleep(self.retry_timeout)
                 else:
-                    self.do_inform_about_unknown_command(client)
+                    log(f'Error in connection. Bot shutting down.', self.debug_mode)
 
     # @decorator_speed_meter(True)
     def on_decision_made(self, msg: str, client: VKinderClient):
