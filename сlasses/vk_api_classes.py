@@ -212,8 +212,7 @@ def timestamp_to_str(timestamp: int) -> int:
     """
      Determines the number of days since the passed date till present time
     """
-    result = (datetime.today() - datetime.utcfromtimestamp(timestamp)).days
-    return result
+    return (datetime.today() - datetime.utcfromtimestamp(timestamp)).days
 
 
 def last_seen(timestamp: int) -> str:
@@ -235,7 +234,7 @@ def last_seen(timestamp: int) -> str:
         result += PHRASES['at_this_week']
     elif 31 <= days_ago <= 365:
         result += PHRASES['x_months_ago'].format(int(days_ago / 30))
-    elif 366 <= days_ago:
+    elif days_ago >= 366:
         result += PHRASES['x_years_ago'].format(int(days_ago / 365))
     else:
         result += PHRASES['x_days_ago'].format(days_ago)
@@ -315,8 +314,8 @@ def prepare_params(*args):
         elif type(param) is str:
             result += [param]
         elif type(param) in [list, dict, tuple, set]:
-            result += [','.join([str(x) for x in param])]
-    result = ','.join([x for x in result])
+            result += [','.join(str(x) for x in param)]
+    result = ','.join(result)
     return result
 
 
